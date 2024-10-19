@@ -7,6 +7,7 @@ import queue
 import PyPDF2
 import multiprocessing
 import os
+import time
 from queue import Queue
 from multiprocessing import Queue
 
@@ -82,14 +83,13 @@ def extract_keywords(text):
 
 
 def process_pdf(pdf_path, collection):
+    total_start_time = time.time()
     text = read_pdf(pdf_path)
     num_pages = length_of_pdf(pdf_path)
 
     # Generate summary and extract keywords
     summary = generate_summary(text, num_pages)
-    print(summary)
     keywords = extract_keywords(text)
-    print(keywords)
     # Store the document summary and keywords in MongoDB
     document = {
         "filename": os.path.basename(pdf_path),
@@ -97,9 +97,12 @@ def process_pdf(pdf_path, collection):
         "keywords": keywords,
         "num_pages": num_pages
     }
-    print(document)
     collection.insert_one(document)
-    print("done")
+
+    total_end_time = time.time()
+    total_processing_time = total_end_time - total_start_time
+    print(f"Total time to process {os.path.basename(pdf_path)}: {total_processing_time:.2f} seconds")
+    print("Processing done")
 
 
 def worker(queue):
@@ -110,7 +113,6 @@ def worker(queue):
             print(pdf_file ,"   : is being processed.....")
             process_pdf(pdf_file, collection)
             queue.task_done()
-            print("Processed......")
         except Exception as e:
             print(f"Error processing file: {e}")
             queue.task_done()  # Ensure task_done is called even if there's an error
@@ -126,7 +128,6 @@ def ingest_pdfs(folder_path):
     for _ in range(num_workers):
         process = multiprocessing.Process(target=worker, args=(pdf_files,))
         process.start()
-        print("Process started")
         processes.append(process)
 
     # Wait for the queue to be processed
@@ -152,3 +153,4 @@ if __name__ == "__main__":
     # while not pdf_queue.empty():  # Continue while the queue is not empty
     #      pdf = pdf_queue.get()  # Get the next PDF from the queue
     #      print(pdf)
+    # process_pdf("C:/Users/manu/PycharmProjects/pythonProject8/data/1.pdf", connect_to_mongo())
