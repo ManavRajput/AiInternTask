@@ -8,7 +8,9 @@ from nltk.tokenize import word_tokenize
 import string
 from nltk.corpus import stopwords
 from summa import summarizer
-from collections import Counter
+from sklearn.feature_extraction.text import TfidfVectorizer
+import numpy as np
+
 
 
 def connect_to_mongo():
@@ -115,32 +117,51 @@ def summarize_big_chunk(big_chunk, max_length = 150):
 
 
 
-def extract_keywords(text):
-    return Counter(text).most_common(20)
+
+
+def extract_top_keywords_from_chunks(text_chunks, top_n=10):
+    # Create a TF-IDF vectorizer
+    vectorizer = TfidfVectorizer(stop_words='english')
+    tfidf_matrix = vectorizer.fit_transform(text_chunks)
+
+    # Get feature names (words)
+    feature_names = vectorizer.get_feature_names_out()
+
+    # Get the sum of the TF-IDF scores for each term
+    tfidf_scores = np.asarray(tfidf_matrix.sum(axis=0)).flatten()
+
+    # Create a list of (word, score) tuples
+    word_scores = [(word, score) for word, score in zip(feature_names, tfidf_scores)]
+
+    # Sort by score (higher score comes first) and get the top N keywords
+    top_keywords = sorted(word_scores, key=lambda x: x[1], reverse=True)[:top_n]
+
+    # Return only the keywords (words)
+    return [keyword for keyword, score in top_keywords]
 
 
 def process_pdf(pdf_path, collection):
     total_start_time = time.time()
     num_pages = length_of_pdf(pdf_path)
-    print("number of pages : ", num_pages)
+    print("number of pages : \n", num_pages)
     # Generate summary and extract keywords
     chunks = extract_text_from_pdf(pdf_path)  # Extract and clean the text
     big_chunk = summarize_all_chunks(chunks)  # Summarize all cleaned chunks into "Big Chunk"
-    final_summary = summarize_big_chunk(big_chunk)
-    # keywords = extract_keywords(text)
+    final_summary = summarize_big_chunk(big_chunk)  #find the top 10 keywords using nltk
+    keywords = extract_top_keywords_from_chunks(chunks)
     # Store the document summary and keywords in MongoDB
     document = {
         "filename": os.path.basename(pdf_path),
         "summary": final_summary,
-        # "keywords": keywords,
+        "keywords": keywords,
         "num_pages": num_pages
     }
-    collection.insert_one(document)
-
-    total_end_time = time.time()
+    collection.insert_one(document) #inserting the processed in fo into the server
+    total_end_time = time.time()  # calculating the time for processing one pdf
     total_processing_time = total_end_time - total_start_time
-    print(f"Total time to process {os.path.basename(pdf_path)}: {total_processing_time:.2f} seconds")
-    print(f"Processing done for {os.path.basename(pdf_path)}")
+    print(f"Processing done for {os.path.basename(pdf_path)}\n")
+    print(f"Total time to process {os.path.basename(pdf_path)}: {total_processing_time:.2f} seconds \n")
+
 
 
 def worker(queue):
@@ -184,4 +205,5 @@ if __name__ == "__main__":
     path = "C:/Users/manu/PycharmProjects/pythonProject8/data"
     folder_path = path
     ingest_pdfs(folder_path)
+    print("......................................EXECUTION COMPLETED..................................................")
 
