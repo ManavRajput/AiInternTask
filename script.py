@@ -12,7 +12,7 @@ import numpy as np
 
 #function to establish connection to the MongoDb database
 def connect_to_mongo():
-    client = MongoClient("mongodb+srv://Rose:Manav@pdfcluster.9e0sh.mongodb.net/?retryWrites=true&w=majority&appName=pdfcluster")
+    client = MongoClient("mongodb+srv://<username>:<password>@pdfcluster.9e0sh.mongodb.net/?retryWrites=true&w=majority&appName=<databasename>") #insert your username,password and database name for Mongdb connection
     db = client['pdf_reader_db']
     collection = db['pdf_summaries']
     return collection
@@ -174,7 +174,7 @@ def worker(queue):
 def ingest_pdfs(folder_path):
     pdf_files = scan_pdf_files(folder_path)  # This still works with os.walk
 
-    num_workers = 2  # Set the number of worker processes
+    num_workers = 2  # Set the number of worker processes You can change this as per your computational power
     processes = []
 
     # Start multiple worker processes
@@ -195,7 +195,7 @@ def ingest_pdfs(folder_path):
 
 # Main entry
 if __name__ == "__main__":
-    path = "C:/Users/manu/PycharmProjects/pythonProject8/data"
+    path = "c:/user/file_name" #specify your folder path where pdf files are stored
     folder_path = path
     ingest_pdfs(folder_path)
     print("......................................EXECUTION COMPLETED..................................................")
