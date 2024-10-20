@@ -1,15 +1,14 @@
 
-from pdfminer.high_level import extract_text
-from transformers import pipeline
-from keybert import KeyBERT
 from pymongo import MongoClient
-import queue
-import PyPDF2
 import multiprocessing
 import os
 import time
-from queue import Queue
-from multiprocessing import Queue
+import PyPDF2
+from nltk.tokenize import word_tokenize
+import string
+from nltk.corpus import stopwords
+from summa import summarizer
+from collections import Counter
 
 
 def connect_to_mongo():
@@ -20,81 +19,120 @@ def connect_to_mongo():
 
 def scan_pdf_files(folder_path):
     pdf_files = multiprocessing.JoinableQueue()
+
+    # Scan for PDF files and add them to the queue
     for root, dirs, files in os.walk(folder_path):
         for file in files:
             if file.endswith(".pdf"):
-                pdf_files.put(os.path.join(root, file))
+                pdf_files.put(os.path.join(root, file))  # Add file path to the queue
 
-
-    # Assuming pdf_queue is already populated with file paths
-    updated_queue = multiprocessing.JoinableQueue()  # Create a new queue for updated paths
+    # Create a new queue for updated paths
+    updated_queue = multiprocessing.JoinableQueue()
 
     # Update each file path in the queue
     while not pdf_files.empty():
         pdf = pdf_files.get()  # Get the next PDF from the queue
         updated_pdf = pdf.replace("\\", '/')  # Replace backslashes with forward slashes
         updated_queue.put(updated_pdf)  # Put the updated path into the new queue
+        pdf_files.task_done()  # Mark the task as done
 
-    # If you want to replace the original queue with the updated one
-    pdf_files = updated_queue
-    return pdf_files
+    return updated_queue  # Return the updated queue
+
 
 def length_of_pdf(pdf_path):
     try:
         with open(pdf_path, 'rb') as file:
             reader = PyPDF2.PdfReader(file)  # Load the PDF file
             num_pages = len(reader.pages)
-            print("number of pages : " ,num_pages)
         return num_pages
     except Exception as e:
         return f"Error: {e}"
 
 
-def read_pdf(pdf_path, max_pages=5):
-    text = ""
-    with open(pdf_path, "rb") as file:
+
+def clean_text(text):
+    stop_words = set(stopwords.words('english'))
+    # Remove punctuation and lowercase the text
+    text = text.lower()    #.translate(str.maketrans('', '', string.punctuation))
+
+    # Tokenize the text
+    words = word_tokenize(text)
+
+    # Remove stop words
+    filtered_words = [word for word in words if word not in stop_words]
+
+    # Join the filtered words back into a single string
+    cleaned_text = ' '.join(filtered_words)
+
+    return cleaned_text
+
+def extract_text_from_pdf(pdf_path):
+    # Open the PDF file
+    with open(pdf_path, 'rb') as file:
+        # Create a PDF reader object
         reader = PyPDF2.PdfReader(file)
-        total_pages = len(reader.pages)
+        total_pages = length_of_pdf(pdf_path)
 
-        # Process only the first `max_pages` or the total pages, whichever is smaller
-        for page_num in range(min(max_pages, total_pages)):
-            text += reader.pages[page_num].extract_text() + "\n"
+        # Extract text in chunks of 10 pages
+        chunks = []
+        chunk_size = 10
+        for i in range(0, total_pages, chunk_size):
+            chunk_text = ""
+            for j in range(i, min(i + chunk_size, total_pages)):
+                page = reader.pages[j]
+                chunk_text += page.extract_text()  # Extract raw text from each page
 
-    return text
+            # Clean the chunked text using clean_text function
+            cleaned_chunk = clean_text(chunk_text)
+            chunks.append(cleaned_chunk)
+        return chunks
 
 
-def  generate_summary(txt, pdf_length):
-    summarizer = pipeline('summarization', model = 't5-base')
-    if pdf_length <= 10:
-        max_length = 50
-    elif pdf_length <= 30:
-        max_length = 100
-    else:
-        max_length = 150
+# Function to extract, clean, and summarize text from PDF using TextRank
+def summarize_all_chunks(chunks):
+    if len(chunks) == 1:
+        big_chuck = chunks[0] # Use the entire text as the summary for one page
+    summaries = []  # Initialize an empty list to store summaries
+    for chunk_text in chunks:
+        # Summarize 20% of each cleaned chunk text using TextRank
+        summary = summarizer.summarize(chunk_text, ratio=0.2)
+        summaries.append(summary)  # Append each summary to the list
 
-    summary = summarizer(txt, max_length=max_length, min_length = 30, do_sample = False)
-    return summary[0]['summary_text']
+    # Combine all summaries into one "Big Chunk"
+    big_chunk = ' '.join(summaries)
+    return big_chunk  # Return the combined summary
+
+
+# Function to summarize the "Big Chunk"
+def summarize_big_chunk(big_chunk, max_length = 150):
+    final_summary = summarizer.summarize(big_chunk, ratio=0.2)  # Summarize 20% of the big chunk
+    final_summary_words = final_summary.split()
+    if len(final_summary_words) > max_length:
+        final_summary = ' '.join(final_summary_words[:max_length])
+
+    final_summary = final_summary.lower().translate(str.maketrans('', '', string.punctuation + string.digits))
+    return final_summary
+
 
 
 def extract_keywords(text):
-    kw_model = KeyBERT('distilbert-base-nli-mean-tokens')
-    keywords = kw_model.extract_keywords(text, keyphrase_ngram_range=(1, 3), stop_words='english', top_n=10)
-    return [keyword[0] for keyword in keywords]
+    return Counter(text).most_common(20)
 
 
 def process_pdf(pdf_path, collection):
     total_start_time = time.time()
-    text = read_pdf(pdf_path)
     num_pages = length_of_pdf(pdf_path)
-
+    print("number of pages : ", num_pages)
     # Generate summary and extract keywords
-    summary = generate_summary(text, num_pages)
-    keywords = extract_keywords(text)
+    chunks = extract_text_from_pdf(pdf_path)  # Extract and clean the text
+    big_chunk = summarize_all_chunks(chunks)  # Summarize all cleaned chunks into "Big Chunk"
+    final_summary = summarize_big_chunk(big_chunk)
+    # keywords = extract_keywords(text)
     # Store the document summary and keywords in MongoDB
     document = {
         "filename": os.path.basename(pdf_path),
-        "summary": summary,
-        "keywords": keywords,
+        "summary": final_summary,
+        # "keywords": keywords,
         "num_pages": num_pages
     }
     collection.insert_one(document)
@@ -102,20 +140,21 @@ def process_pdf(pdf_path, collection):
     total_end_time = time.time()
     total_processing_time = total_end_time - total_start_time
     print(f"Total time to process {os.path.basename(pdf_path)}: {total_processing_time:.2f} seconds")
-    print("Processing done")
+    print(f"Processing done for {os.path.basename(pdf_path)}")
 
 
 def worker(queue):
     collection = connect_to_mongo()
     while True:
+        pdf_file = queue.get()  # Get the next PDF from the queue
+        if pdf_file is None:  # Exit condition
+            break
         try:
-            pdf_file = queue.get()
-            print(pdf_file ,"   : is being processed.....")
             process_pdf(pdf_file, collection)
-            queue.task_done()
         except Exception as e:
             print(f"Error processing file: {e}")
-            queue.task_done()  # Ensure task_done is called even if there's an error
+        finally:
+            queue.task_done()  # Mark the task as done  # Ensure task_done is called even if there's an error
 
 
 def ingest_pdfs(folder_path):
@@ -130,27 +169,19 @@ def ingest_pdfs(folder_path):
         process.start()
         processes.append(process)
 
-    # Wait for the queue to be processed
-    pdf_files.join()
+    pdf_files.join()  # This blocks until all tasks are done
+
+    # Send exit signals to workers
+    for _ in range(num_workers):
+        pdf_files.put(None)  # Send a signal to each worker to exit
 
     # Ensure all processes are done
     for process in processes:
         process.join()
 
-# Main entry
+    # Main entry
 if __name__ == "__main__":
     path = "C:/Users/manu/PycharmProjects/pythonProject8/data"
     folder_path = path
     ingest_pdfs(folder_path)
-    # pdf_queue = scan_pdf_files(folder_path)
-    # pdf_queue = multiprocessing.JoinableQueue()  # Use multiprocessing Queue
-    # pdf_files = scan_pdf_files(folder_path)  # This still works with os.walk
-    #
-    # # Add all the scanned PDFs to the multiprocessing queue
-    # for pdf in pdf_files:  # Add each PDF file path to the queue
-    #     pdf_queue.put(pdf)
-    #
-    # while not pdf_queue.empty():  # Continue while the queue is not empty
-    #      pdf = pdf_queue.get()  # Get the next PDF from the queue
-    #      print(pdf)
-    # process_pdf("C:/Users/manu/PycharmProjects/pythonProject8/data/1.pdf", connect_to_mongo())
+
