@@ -1,4 +1,3 @@
-
 from pymongo import MongoClient
 import multiprocessing
 import os
@@ -11,14 +10,14 @@ from summa import summarizer
 from sklearn.feature_extraction.text import TfidfVectorizer
 import numpy as np
 
-
-
+#function to establish connection to the MongoDb database
 def connect_to_mongo():
     client = MongoClient("mongodb+srv://Rose:Manav@pdfcluster.9e0sh.mongodb.net/?retryWrites=true&w=majority&appName=pdfcluster")
     db = client['pdf_reader_db']
     collection = db['pdf_summaries']
     return collection
 
+#funtion to identify and queue all the available pdf files present in the folder
 def scan_pdf_files(folder_path):
     pdf_files = multiprocessing.JoinableQueue()
 
@@ -40,7 +39,7 @@ def scan_pdf_files(folder_path):
 
     return updated_queue  # Return the updated queue
 
-
+#function to identify the number of pages the pdf file is consist of
 def length_of_pdf(pdf_path):
     try:
         with open(pdf_path, 'rb') as file:
@@ -50,8 +49,7 @@ def length_of_pdf(pdf_path):
     except Exception as e:
         return f"Error: {e}"
 
-
-
+#function to clean the extracted text from the pdf
 def clean_text(text):
     stop_words = set(stopwords.words('english'))
     # Remove punctuation and lowercase the text
@@ -68,6 +66,7 @@ def clean_text(text):
 
     return cleaned_text
 
+#function to extract and make clean chucks of the text fron the pdf
 def extract_text_from_pdf(pdf_path):
     # Open the PDF file
     with open(pdf_path, 'rb') as file:
@@ -89,8 +88,7 @@ def extract_text_from_pdf(pdf_path):
             chunks.append(cleaned_chunk)
         return chunks
 
-
-# Function to extract, clean, and summarize text from PDF using TextRank
+# Function summarize text from PDF using TextRank
 def summarize_all_chunks(chunks):
     if len(chunks) == 1:
         big_chuck = chunks[0] # Use the entire text as the summary for one page
@@ -104,8 +102,7 @@ def summarize_all_chunks(chunks):
     big_chunk = ' '.join(summaries)
     return big_chunk  # Return the combined summary
 
-
-# Function to summarize the "Big Chunk"
+# Function to summarize the "Big Chunk" i.e combination of all the summaries of the chucks of one pdf
 def summarize_big_chunk(big_chunk, max_length = 150):
     final_summary = summarizer.summarize(big_chunk, ratio=0.2)  # Summarize 20% of the big chunk
     final_summary_words = final_summary.split()
@@ -115,10 +112,7 @@ def summarize_big_chunk(big_chunk, max_length = 150):
     final_summary = final_summary.lower().translate(str.maketrans('', '', string.punctuation + string.digits))
     return final_summary
 
-
-
-
-
+#function to extract top 1o keywords
 def extract_top_keywords_from_chunks(text_chunks, top_n=10):
     # Create a TF-IDF vectorizer
     vectorizer = TfidfVectorizer(stop_words='english')
@@ -139,7 +133,7 @@ def extract_top_keywords_from_chunks(text_chunks, top_n=10):
     # Return only the keywords (words)
     return [keyword for keyword, score in top_keywords]
 
-
+#function to specify how the pdf file should be processes
 def process_pdf(pdf_path, collection):
     total_start_time = time.time()
     num_pages = length_of_pdf(pdf_path)
@@ -162,8 +156,7 @@ def process_pdf(pdf_path, collection):
     print(f"Processing done for {os.path.basename(pdf_path)}\n")
     print(f"Total time to process {os.path.basename(pdf_path)}: {total_processing_time:.2f} seconds \n")
 
-
-
+#worker function defined to specify the number of workers and their work
 def worker(queue):
     collection = connect_to_mongo()
     while True:
@@ -177,7 +170,7 @@ def worker(queue):
         finally:
             queue.task_done()  # Mark the task as done  # Ensure task_done is called even if there's an error
 
-
+#Final output generator function
 def ingest_pdfs(folder_path):
     pdf_files = scan_pdf_files(folder_path)  # This still works with os.walk
 
@@ -200,7 +193,7 @@ def ingest_pdfs(folder_path):
     for process in processes:
         process.join()
 
-    # Main entry
+# Main entry
 if __name__ == "__main__":
     path = "C:/Users/manu/PycharmProjects/pythonProject8/data"
     folder_path = path
