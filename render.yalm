@@ -2,6 +2,6 @@ services:
   - type: web
     name: MyPythonApp
     env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python your_script_name.py
+    buildCommand: pip install -r requirement.txt
+    startCommand: python script.py
     autoDeploy: true
